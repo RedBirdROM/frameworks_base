@@ -27,6 +27,11 @@ import android.telephony.SubscriptionManager;
 import android.util.ArrayMap;
 import android.util.IndentingPrintWriter;
 import android.util.SparseArray;
+import android.content.ContentResolver;
+import android.database.ContentObserver;
+import android.os.Handler;
+import android.os.UserHandle;
+import android.provider.Settings;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -162,8 +167,32 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
 
     private LyricController mLyricController;
 
+    private View mCustomCarrierLabel;
+    private int mShowCarrierLabel;
+
     private List<String> mBlockedIcons = new ArrayList<>();
     private Map<Startable, Startable.State> mStartableStates = new ArrayMap<>();
+
+    private final Handler mHandler = new Handler();
+    private class SettingsObserver extends ContentObserver {
+        SettingsObserver(Handler handler) {
+            super(handler);
+        }
+ 
+        void observe() {
+            mContentResolver.registerContentObserver(Settings.System.getUriFor(
+                    Settings.System.STATUS_BAR_SHOW_CARRIER),
+                    false, this, UserHandle.USER_ALL);
+        }
+
+        @Override
+        public void onChange(boolean selfChange) {
+            updateSettings(true);
+        }
+    }
+ 
+    private SettingsObserver mSettingsObserver;
+    private ContentResolver mContentResolver;
 
     private final OngoingCallListener mOngoingCallListener = new OngoingCallListener() {
         @Override
@@ -317,12 +346,15 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         mDarkIconManager = mDarkIconManagerFactory.create(
                 view.findViewById(R.id.statusIcons), StatusBarLocation.HOME);
         mDarkIconManager.setShouldLog(true);
+        mContentResolver = getContext().getContentResolver();
+        mSettingsObserver = new SettingsObserver(mHandler);
         updateBlockedIcons();
         mStatusBarIconController.addIconGroup(mDarkIconManager);
         mEndSideContent = mStatusBar.findViewById(R.id.status_bar_end_side_content);
         mEndSideAlphaController = new MultiSourceMinAlphaController(mEndSideContent);
         mClockController = mStatusBar.getClockController();
         mClockView = mStatusBar.findViewById(R.id.clock);
+        mCustomCarrierLabel = mStatusBar.findViewById(R.id.statusbar_carrier_text);
         mOngoingCallChip = mStatusBar.findViewById(R.id.ongoing_call_chip);
         mCenterClock = mStatusBar.findViewById(R.id.clock_center);
         mLeftClock = mStatusBar.findViewById(R.id.clock);
@@ -342,6 +374,8 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         mSystemEventAnimator = getSystemEventAnimator();
         mCarrierConfigTracker.addCallback(mCarrierConfigCallback);
         mCarrierConfigTracker.addDefaultDataSubscriptionChangedListener(mDefaultDataListener);
+        mSettingsObserver.observe();
+        updateSettings(false);
 
         mCollapsedStatusBarViewBinder.bind(
                 mStatusBar, mCollapsedStatusBarViewModel, mStatusBarVisibilityChangeListener);
@@ -550,9 +584,11 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
             if (newModel.getShowSystemInfo()) {
                 showEndSideContent(animate);
                 showOperatorName(animate);
+                showCarrierName(animate);
             } else {
                 hideEndSideContent(animate);
                 hideOperatorName(animate);
+                hideCarrierName(animate);
             }
         }
 
@@ -749,11 +785,13 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
 
     public void hideNotificationIconArea(boolean animate) {
         animateHide(mLeftLogo, animate);
+        animateHiddenState(mCustomCarrierLabel, View.GONE, animate);
         animateHide(mNotificationIconAreaInner, animate);
     }
 
     public void showNotificationIconArea(boolean animate) {
         animateShow(mLeftLogo, animate);
+        animateShow(mCustomCarrierLabel, animate);
         animateShow(mNotificationIconAreaInner, animate);
     }
 
@@ -766,6 +804,18 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
     public void showOperatorName(boolean animate) {
         if (mOperatorNameViewController != null) {
             animateShow(mOperatorNameViewController.getView(), animate);
+        }
+    }
+
+    public void hideCarrierName(boolean animate) {
+        if (mCustomCarrierLabel != null) {
+            animateHiddenState(mCustomCarrierLabel, View.GONE, animate);
+        }
+    }
+
+    public void showCarrierName(boolean animate) {
+        if (mCustomCarrierLabel != null) {
+            setCarrierLabel(animate);
         }
     }
 
@@ -881,6 +931,21 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
         int rightMargin = mStatusBar.getRight() - right;
 
         mLocationPublisher.updateStatusBarMargin(leftMargin, rightMargin);
+    }
+
+    public void updateSettings(boolean animate) {
+        mShowCarrierLabel = Settings.System.getIntForUser(mContentResolver,
+                Settings.System.STATUS_BAR_SHOW_CARRIER, 1,
+                UserHandle.USER_CURRENT);
+        setCarrierLabel(animate);
+    }
+
+    private void setCarrierLabel(boolean animate) {
+        if (mShowCarrierLabel == 2 || mShowCarrierLabel == 3) {
+            animateShow(mCustomCarrierLabel, animate);
+        } else {
+            animateHiddenState(mCustomCarrierLabel, View.GONE, animate);
+        }
     }
 
     private final ContentObserver mVolumeSettingObserver = new ContentObserver(null) {
